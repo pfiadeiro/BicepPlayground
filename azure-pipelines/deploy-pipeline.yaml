@@ -1,0 +1,96 @@
+# This is the default template for deploying many resource groups
+
+# each one will contain 2 storage accounts and a number of containers
+
+trigger: none # will disable CI builds (but not PR builds)
+
+parameters:
+- name: environments
+  type: object
+  default: ['dev','prod']
+- name: films
+  type: object
+  default: ['Iron-Man','Ant-Man-and-the-Wasp']
+- name: azureSubscription
+  type: string
+  default: pedrof-service-connection
+- name: whatIf
+  type: boolean
+  default: false
+
+stages:
+  - ${{ each env in parameters.environments }}:
+    - stage: Deploy_${{ env }}_Films_ResourceGroups
+      jobs:
+        - ${{ each film in parameters.films }}:
+          - job:
+            displayName: 'Deploy ${{ film }} Resource Group'
+            dependsOn: []
+            variables:          
+              - template: variables/${{ film }}-${{ env }}.yaml
+            pool:
+              vmImage: windows-latest
+            steps:
+            - checkout: self
+              persistCredentials: true
+            - task: AzurePowerShell@5
+              displayName: Deploy The Bicep
+              inputs:
+                azureSubscription: ${{ parameters.azureSubscription }}
+                ScriptType: 'InlineScript'
+                Inline: |
+                 $date = Get-Date -Format yyyyMMddHHmmsss
+                 $deploymentname = 'Deploy_RG_{0}' -f $date # name of the deployment seen in the activity log
+                 Write-Host "Deployment name is $deploymentname"
+                 $resourcegroupname = '${{ variables.rgName }}'
+                 Write-Host "We will deploy to the $resourcegroupname resource group"
+
+                 $WhatIfParam = '${{ parameters.whatIf }}'
+                 if($WhatIfParam -eq 'false'){
+                   $WhatIf = $false
+                 }else{
+                   $WhatIf = $true
+                 }
+
+                  # array params - these are passed in as 'string','string','string'
+                  $storageAccountContainersString = '${{ variables.storageAccountContainers }}'
+                  if($storageAccountContainersString -ne 'null'){
+                  $storageAccountContainersArray = $storageAccountContainersString.Split(',')
+                  } else {
+                   $storageAccountContainersArray = @()
+                  }
+               
+                 $templateFile = 'bicep\main.bicep' 
+                  if(Test-Path $templateFile){
+                    Write-Host "We have the template file $templateFile"
+                  }  else {
+                      Write-Warning "Can't deploy without the templatefile $templateFile"
+                      [System.Environment]::Exit(1)
+                    }
+                  
+                  $deploymentConfig = @{
+                        Name                                    = $deploymentname
+                        TemplateFile                            = $templateFile
+                        location                                = '${{ variables.location }}'
+                        WhatIf                                  = $WhatIf 
+                        rgName                                  = '${{ variables.rgName }}'
+                        storageAccountName                      = '${{ variables.storageAccountName }}'
+                        storageAccountContainers                = $storageAccountContainersArray
+                    }
+                    $message = "We are deploying with - {0} " -f ($deploymentConfig | Out-String)
+                    Write-Host $message
+                    try{
+                      New-AzDeployment @deploymentConfig 
+                    } catch {
+                      Write-Warning "We failed to deploy. Error below"
+                      Write-Warning "If this doesnt give you al the info - run the code above and fill in the correct vars from the logs"
+                      $Error  | ForEach-Object {$_ | Format-List -Property * -Force}
+                      $Error  | ForEach-Object {$_.Exception.GetBaseException().Message}
+                      Write-Warning "Maybe more information here"
+                      (Get-AzDeploymentOperation -DeploymentName $deploymentname).Properties.response | ConvertTo-Json
+                      [System.Environment]::Exit(1)
+                    }
+                azurePowerShellVersion: '6.3.0'
+              env:
+                SYSTEM_ACCESSTOKEN: $(system.accesstoken)
+                pwsh: true

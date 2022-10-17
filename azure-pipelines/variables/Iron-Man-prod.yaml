@@ -1,0 +1,5 @@
+variables:
+ rgName: 'Iron-Man-prod-rg'
+ location: 'uksouth'
+ storageAccountName: 'ironman1prod'
+ storageAccountContainers: 'tonystark,rhodey,pepperpots,jarvis' # IMPORTANT - MUST BE 'containername1,containername2' for containers to be created
